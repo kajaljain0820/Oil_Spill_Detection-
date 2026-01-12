@@ -1,6 +1,5 @@
 import os
 import streamlit as st
-import gdown
 import torch
 import cv2
 import numpy as np
@@ -63,3 +62,4 @@ if uploaded_file is not None:
 
     st.subheader("Predicted Oil Spill Mask")
     st.image(mask * 255, clamp=True)
+
