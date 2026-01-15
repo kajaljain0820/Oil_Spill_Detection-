@@ -19,62 +19,9 @@ MODEL_URL = f"https://drive.google.com/uc?id={MODEL_ID}"
 # PAGE CONFIG
 # =============================
 st.set_page_config(
-    page_title="Oil Spill Detection",
+    page_title="Oil Spill Detection System",
     page_icon="🛢️",
     layout="wide"
-)
-
-# =============================
-# CUSTOM CSS (FRONTEND)
-# =============================
-st.markdown(
-    """
-    <style>
-    .main {
-        background-color: #0E1117;
-    }
-    .title {
-        font-size: 42px;
-        font-weight: 700;
-        color: #FFFFFF;
-        margin-bottom: 5px;
-    }
-    .subtitle {
-        font-size: 18px;
-        color: #B0B3B8;
-        margin-bottom: 30px;
-    }
-    .card {
-        background-color: #161B22;
-        padding: 20px;
-        border-radius: 14px;
-        margin-bottom: 20px;
-    }
-    .verdict-green {
-        background-color: #0F5132;
-        color: #75F0B5;
-        padding: 12px 18px;
-        border-radius: 30px;
-        font-size: 20px;
-        font-weight: 600;
-        display: inline-block;
-    }
-    .verdict-red {
-        background-color: #5A1111;
-        color: #FF7B7B;
-        padding: 12px 18px;
-        border-radius: 30px;
-        font-size: 20px;
-        font-weight: 600;
-        display: inline-block;
-    }
-    .metric-label {
-        color: #B0B3B8;
-        font-size: 14px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
 )
 
 # =============================
@@ -106,31 +53,32 @@ download_model()
 model = load_model()
 
 # =============================
-# HEADER
+# UI
 # =============================
-st.markdown('<div class="title">🛢️ Oil Spill Detection System</div>', unsafe_allow_html=True)
+st.title("🛢️ Oil Spill Detection System")
 st.markdown(
-    '<div class="subtitle">AI-based satellite image analysis for detecting marine oil spills</div>',
-    unsafe_allow_html=True
+    """
+    Upload **satellite images** to detect oil spills.
+    - Pixel-accurate segmentation  
+    - Area-based decision logic  
+    - Correct confidence interpretation  
+    - Batch image support  
+    """
 )
 
-# =============================
-# UPLOAD SECTION
-# =============================
-st.markdown('<div class="card">', unsafe_allow_html=True)
+st.divider()
+
 uploaded_files = st.file_uploader(
     "📤 Upload Satellite Images",
     type=["jpg", "jpeg", "png"],
     accept_multiple_files=True
 )
-st.markdown('</div>', unsafe_allow_html=True)
 
 # =============================
 # PROCESS IMAGES
 # =============================
 if uploaded_files:
     for uploaded_file in uploaded_files:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader(f"📄 {uploaded_file.name}")
 
         # -------- Read Image --------
@@ -139,7 +87,7 @@ if uploaded_files:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image_resized = cv2.resize(image, (256, 256))
 
-        # -------- Preprocess --------
+        # -------- Preprocess (MATCH TRAINING) --------
         img = image_resized.astype(np.float32) / 255.0
         img = (img - 0.5) / 0.5
         img_tensor = torch.tensor(img).permute(2, 0, 1).unsqueeze(0)
@@ -149,39 +97,51 @@ if uploaded_files:
             logits = model(img_tensor)
             probs = torch.sigmoid(logits)
 
+        # -------- Shape fix --------
         mask = (probs > 0.5).cpu().numpy().astype(np.uint8).squeeze()
         prob_map = probs.squeeze().cpu().numpy()
 
+        # -------- Area-based decision --------
         spill_pixels = np.sum(mask == 1)
         total_pixels = mask.size
         spill_percentage = (spill_pixels / total_pixels) * 100
 
         if spill_pixels > 0:
+            # Oil present → oil confidence
             confidence = prob_map[mask == 1].mean() * 100
-            verdict_html = '<div class="verdict-red">🛢️ Oil Spill Detected</div>'
+            verdict = "🛢️ Oil Spill Detected"
+            verdict_color = "red"
         else:
+            # No oil → background confidence
             confidence = (1 - prob_map).mean() * 100
-            verdict_html = '<div class="verdict-green">✅ No Oil Spill Detected</div>'
+            verdict = "✅ No Oil Spill Detected"
+            verdict_color = "green"
 
-        # -------- Images --------
+        # -------- Overlay --------
+        overlay = image_resized.copy()
+        overlay[mask == 1] = [255, 0, 0]
+        result = cv2.addWeighted(image_resized, 0.7, overlay, 0.3, 0)
+
+        # -------- Display --------
         col1, col2 = st.columns(2)
+
         with col1:
             st.image(image_resized, caption="Input Image", width="stretch")
-        with col2:
-            overlay = image_resized.copy()
-            overlay[mask == 1] = [255, 0, 0]
-            result = cv2.addWeighted(image_resized, 0.7, overlay, 0.3, 0)
-            st.image(result, caption="Prediction Overlay", width="stretch")
 
-        st.markdown(verdict_html, unsafe_allow_html=True)
+        with col2:
+            st.image(result, caption="Predicted Oil Spill", width="stretch")
+
+        st.markdown(
+            f"<h3 style='color:{verdict_color}'>{verdict}</h3>",
+            unsafe_allow_html=True
+        )
 
         # -------- Metrics --------
-        m1, m2 = st.columns(2)
-        with m1:
-            st.metric("Prediction Confidence (%)", f"{confidence:.2f}")
-        with m2:
-            st.metric("Spill Area (%)", f"{spill_percentage:.3f}")
+        st.metric("Prediction Confidence (%)", f"{confidence:.2f}")
+        st.metric("Spill Area (%)", f"{spill_percentage:.3f}")
 
+        # -------- Progress Bar --------
+        st.write("### 🔍 Confidence Level")
         st.progress(min(int(confidence), 100))
 
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.divider()
