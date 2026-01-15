@@ -98,7 +98,9 @@ if uploaded_files:
             logits = model(img_tensor)
             probs = torch.sigmoid(logits)
 
+        # -------- FIXED SHAPES --------
         mask = (probs > 0.5).cpu().numpy().astype(np.uint8).squeeze()
+        prob_map = probs.squeeze().cpu().numpy()
 
         # -------- Correct Detection Logic --------
         spill_pixels = np.sum(mask == 1)
@@ -106,7 +108,7 @@ if uploaded_files:
         spill_percentage = (spill_pixels / total_pixels) * 100
 
         if spill_pixels > 0:
-            confidence = probs.cpu().numpy()[mask == 1].mean() * 100
+            confidence = prob_map[mask == 1].mean() * 100
             verdict = "🛢️ Oil Spill Detected"
             verdict_color = "red"
         else:
@@ -123,10 +125,10 @@ if uploaded_files:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.image(image_resized, caption="Input Image", use_container_width=True)
+            st.image(image_resized, caption="Input Image", width="stretch")
 
         with col2:
-            st.image(result, caption="Predicted Oil Spill", use_container_width=True)
+            st.image(result, caption="Predicted Oil Spill", width="stretch")
 
         st.markdown(
             f"<h3 style='color:{verdict_color}'>{verdict}</h3>",
