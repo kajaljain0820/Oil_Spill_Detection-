@@ -5,28 +5,29 @@ import cv2
 import numpy as np
 import segmentation_models_pytorch as smp
 import gdown
+from PIL import Image
 
-# -----------------------------
+# =============================
 # CONFIG
-# -----------------------------
+# =============================
 DEVICE = torch.device("cpu")
 
 MODEL_PATH = "oil_spill_unet.pth"
 MODEL_ID = "1JWz4xx7sVja-dZFB7lIYK8aGvFNRF7mA"
 MODEL_URL = f"https://drive.google.com/uc?id={MODEL_ID}"
 
-# -----------------------------
+# =============================
 # PAGE CONFIG
-# -----------------------------
+# =============================
 st.set_page_config(
     page_title="Oil Spill Detection System",
     page_icon="🛢️",
-    layout="centered"
+    layout="wide"
 )
 
-# -----------------------------
+# =============================
 # DOWNLOAD MODEL
-# -----------------------------
+# =============================
 @st.cache_resource
 def download_model():
     if not os.path.exists(MODEL_PATH):
@@ -34,9 +35,9 @@ def download_model():
             gdown.download(MODEL_URL, MODEL_PATH, quiet=False)
     return MODEL_PATH
 
-# -----------------------------
+# =============================
 # LOAD MODEL
-# -----------------------------
+# =============================
 @st.cache_resource
 def load_model():
     model = smp.Unet(
@@ -49,91 +50,103 @@ def load_model():
     model.eval()
     return model
 
-
 download_model()
 model = load_model()
 
-# -----------------------------
-# FRONTEND UI
-# -----------------------------
+# =============================
+# UI
+# =============================
 st.title("🛢️ Oil Spill Detection System")
 st.markdown(
     """
-    Upload a **satellite image** to detect oil spill regions.
-    The system will provide:
-    - 🧠 Oil spill segmentation
-    - 📊 Confidence score
-    - ✅ Final decision
+    Upload **satellite images** to detect oil spills.
+    - Pixel-accurate segmentation  
+    - Area-based detection (correct logic)  
+    - Region-based confidence  
+    - Batch processing  
     """
 )
 
 st.divider()
 
-uploaded_file = st.file_uploader(
-    "📤 Upload Satellite Image",
-    type=["jpg", "jpeg", "png"]
+uploaded_files = st.file_uploader(
+    "📤 Upload Satellite Images",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
 )
 
-# -----------------------------
-# PROCESS IMAGE
-# -----------------------------
-if uploaded_file is not None:
-    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+# =============================
+# PROCESS IMAGES
+# =============================
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        st.subheader(f"📄 {uploaded_file.name}")
 
-    image_resized = cv2.resize(image, (256, 256))
+        # -------- Read Image --------
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image_resized = cv2.resize(image, (256, 256))
 
-    img_tensor = torch.tensor(image_resized).permute(2, 0, 1)
-    img_tensor = img_tensor.unsqueeze(0).float() / 255.0
+        # -------- Preprocess (MATCH COLAB) --------
+        img = image_resized.astype(np.float32) / 255.0
+        img = (img - 0.5) / 0.5
+        img_tensor = torch.tensor(img).permute(2, 0, 1).unsqueeze(0)
 
-    with torch.no_grad():
-        output = model(img_tensor)
-        output = torch.sigmoid(output)
+        # -------- Prediction --------
+        with torch.no_grad():
+            logits = model(img_tensor)
+            probs = torch.sigmoid(logits)
 
-    prob_map = output.squeeze().cpu().numpy()
-    mask = (prob_map > 0.5).astype(np.uint8)
+        mask = (probs > 0.5).cpu().numpy().astype(np.uint8).squeeze()
 
-    # -----------------------------
-    # CONFIDENCE CALCULATION
-    # -----------------------------
-    confidence = float(prob_map.mean()) * 100
+        # -------- Correct Detection Logic --------
+        spill_pixels = np.sum(mask == 1)
+        total_pixels = mask.size
+        spill_percentage = (spill_pixels / total_pixels) * 100
 
-    # Decision threshold
-    if confidence >= 20:
-        verdict = "🛢️ Oil Spill Detected"
-        verdict_color = "red"
-    else:
-        verdict = "✅ No Oil Spill Detected"
-        verdict_color = "green"
+        if spill_pixels > 0:
+            confidence = probs.cpu().numpy()[mask == 1].mean() * 100
+            verdict = "🛢️ Oil Spill Detected"
+            verdict_color = "red"
+        else:
+            confidence = 0.0
+            verdict = "✅ No Oil Spill Detected"
+            verdict_color = "green"
 
-    # -----------------------------
-    # DISPLAY RESULTS
-    # -----------------------------
-    col1, col2 = st.columns(2)
+        # -------- Overlay --------
+        overlay = image_resized.copy()
+        overlay[mask == 1] = [255, 0, 0]
+        result = cv2.addWeighted(image_resized, 0.7, overlay, 0.3, 0)
 
-    with col1:
-        st.subheader("📷 Input Image")
-        st.image(image_resized, use_container_width=True)
+        # -------- Display --------
+        col1, col2 = st.columns(2)
 
-    with col2:
-        st.subheader("🧠 Predicted Mask")
-        st.image(mask * 255, clamp=True, use_container_width=True)
+        with col1:
+            st.image(image_resized, caption="Input Image", use_container_width=True)
 
-    st.divider()
+        with col2:
+            st.image(result, caption="Predicted Oil Spill", use_container_width=True)
 
-    # Verdict & Confidence
-    st.markdown(
-        f"""
-        <h2 style="color:{verdict_color}; text-align:center;">
-            {verdict}
-        </h2>
-        """,
-        unsafe_allow_html=True
-    )
+        st.markdown(
+            f"<h3 style='color:{verdict_color}'>{verdict}</h3>",
+            unsafe_allow_html=True
+        )
 
-    st.metric(
-        label="Model Confidence",
-        value=f"{confidence:.2f} %"
-    )
+        # -------- Metrics --------
+        st.metric("Model Confidence (%)", f"{confidence:.2f}")
+        st.metric("Spill Area (%)", f"{spill_percentage:.3f}")
 
+        # -------- Progress Bar --------
+        st.write("### 🔍 Confidence Level")
+        st.progress(min(int(confidence), 100))
+
+        # -------- Download --------
+        st.download_button(
+            label="⬇️ Download Result Image",
+            data=cv2.imencode(".png", result)[1].tobytes(),
+            file_name=f"result_{uploaded_file.name}",
+            mime="image/png"
+        )
+
+        st.divider()
