@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 import segmentation_models_pytorch as smp
 import gdown
-from PIL import Image
 
 # =============================
 # CONFIG
@@ -61,9 +60,9 @@ st.markdown(
     """
     Upload **satellite images** to detect oil spills.
     - Pixel-accurate segmentation  
-    - Area-based detection (correct logic)  
-    - Region-based confidence  
-    - Batch processing  
+    - Area-based decision logic  
+    - Correct confidence interpretation  
+    - Batch image support  
     """
 )
 
@@ -88,7 +87,7 @@ if uploaded_files:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image_resized = cv2.resize(image, (256, 256))
 
-        # -------- Preprocess (MATCH COLAB) --------
+        # -------- Preprocess (MATCH TRAINING) --------
         img = image_resized.astype(np.float32) / 255.0
         img = (img - 0.5) / 0.5
         img_tensor = torch.tensor(img).permute(2, 0, 1).unsqueeze(0)
@@ -98,21 +97,23 @@ if uploaded_files:
             logits = model(img_tensor)
             probs = torch.sigmoid(logits)
 
-        # -------- FIXED SHAPES --------
+        # -------- Shape fix --------
         mask = (probs > 0.5).cpu().numpy().astype(np.uint8).squeeze()
         prob_map = probs.squeeze().cpu().numpy()
 
-        # -------- Correct Detection Logic --------
+        # -------- Area-based decision --------
         spill_pixels = np.sum(mask == 1)
         total_pixels = mask.size
         spill_percentage = (spill_pixels / total_pixels) * 100
 
         if spill_pixels > 0:
+            # Oil present → oil confidence
             confidence = prob_map[mask == 1].mean() * 100
             verdict = "🛢️ Oil Spill Detected"
             verdict_color = "red"
         else:
-            confidence = 0.0
+            # No oil → background confidence
+            confidence = (1 - prob_map).mean() * 100
             verdict = "✅ No Oil Spill Detected"
             verdict_color = "green"
 
@@ -136,19 +137,11 @@ if uploaded_files:
         )
 
         # -------- Metrics --------
-        st.metric("Model Confidence (%)", f"{confidence:.2f}")
+        st.metric("Prediction Confidence (%)", f"{confidence:.2f}")
         st.metric("Spill Area (%)", f"{spill_percentage:.3f}")
 
         # -------- Progress Bar --------
         st.write("### 🔍 Confidence Level")
         st.progress(min(int(confidence), 100))
-
-        # -------- Download --------
-        st.download_button(
-            label="⬇️ Download Result Image",
-            data=cv2.imencode(".png", result)[1].tobytes(),
-            file_name=f"result_{uploaded_file.name}",
-            mime="image/png"
-        )
 
         st.divider()
